@@ -1,26 +1,18 @@
-
 import os
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-import tensorflow.keras.backend as K
 import random
-from scipy.misc import imsave, imresize
-from scipy.optimize import fmin_l_bfgs_b   # https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.fmin_l_bfgs_b.html
 from tensorflow.keras.applications import vgg19
-from tensorflow.keras.preprocessing.image import load_img, img_to_array
-import warnings
 
-random.seed(1618)
-np.random.seed(1618)
-#tf.set_random_seed(1618)   # Uncomment for TF1.
-tf.random.set_seed(1618)
+CONTENT_IMG_PATH = './monke.jpg'
+STYLE_IMG_PATH = './mosaic.jpg' 
+NAME = 'monkmo'
 
-#tf.logging.set_verbosity(tf.logging.ERROR)   # Uncomment for TF1.
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
-CONTENT_IMG_PATH = ""           #TODO: Add this.
-STYLE_IMG_PATH = ""             #TODO: Add this.
+# Weights of the different loss components
+total_weight = 1e-6
+style_weight = 1e-6
+content_weight = 2.5e-8
 
 
 CONTENT_IMG_H = 500
@@ -29,130 +21,123 @@ CONTENT_IMG_W = 500
 STYLE_IMG_H = 500
 STYLE_IMG_W = 500
 
-CONTENT_WEIGHT = 0.1    # Alpha weight.
-STYLE_WEIGHT = 1.0      # Beta weight.
-TOTAL_WEIGHT = 1.0
-
-TRANSFER_ROUNDS = 3
-
-
-
-#=============================<Helper Fuctions>=================================
-'''
-TODO: implement this.
-This function should take the tensor and re-convert it to an image.
-'''
-def deprocessImage(img):
-    return img
-
-
-def gramMatrix(x):
-    features = K.batch_flatten(K.permute_dimensions(x, (2, 0, 1)))
-    gram = K.dot(features, K.transpose(features))
-    return gram
-
-
-
-#========================<Loss Function Builder Functions>======================
-
-def styleLoss(style, gen):
-    return None   #TODO: implement.
-
-
-def contentLoss(content, gen):
-    return K.sum(K.square(gen - content))
-
-
-def totalLoss(x):
-    return None   #TODO: implement.
-
-
-
-
-
-#=========================<Pipeline Functions>==================================
-
-def getRawData():
-    print("   Loading images.")
-    print("      Content image URL:  \"%s\"." % CONTENT_IMG_PATH)
-    print("      Style image URL:    \"%s\"." % STYLE_IMG_PATH)
-    cImg = load_img(CONTENT_IMG_PATH)
-    tImg = cImg.copy()
-    sImg = load_img(STYLE_IMG_PATH)
-    print("      Images have been loaded.")
-    return ((cImg, CONTENT_IMG_H, CONTENT_IMG_W), (sImg, STYLE_IMG_H, STYLE_IMG_W), (tImg, CONTENT_IMG_H, CONTENT_IMG_W))
-
-
-
-def preprocessData(raw):
-    img, ih, iw = raw
-    img = img_to_array(img)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        img = imresize(img, (ih, iw, 3))
-    img = img.astype("float64")
+def preprocess_image(image_path):
+    img = keras.preprocessing.image.load_img(image_path, target_size=(CONTENT_IMG_H, CONTENT_IMG_W))
+    img = keras.preprocessing.image.img_to_array(img)
     img = np.expand_dims(img, axis=0)
     img = vgg19.preprocess_input(img)
-    return img
+    return tf.convert_to_tensor(img)
 
 
-'''
-TODO: Allot of stuff needs to be implemented in this function.
-First, make sure the model is set up properly.
-Then construct the loss function (from content and style loss).
-Gradient functions will also need to be created, or you can use K.Gradients().
-Finally, do the style transfer with gradient descent.
-Save the newly generated and deprocessed images.
-'''
-def styleTransfer(cData, sData, tData):
-    print("   Building transfer model.")
-    contentTensor = K.variable(cData)
-    styleTensor = K.variable(sData)
-    genTensor = K.placeholder((1, CONTENT_IMG_H, CONTENT_IMG_W, 3))
-    inputTensor = K.concatenate([contentTensor, styleTensor, genTensor], axis=0)
-    model = None   #TODO: implement.
-    outputDict = dict([(layer.name, layer.output) for layer in model.layers])
-    print("   VGG19 model loaded.")
-    loss = 0.0
-    styleLayerNames = ["block1_conv1", "block2_conv1", "block3_conv1", "block4_conv1", "block5_conv1"]
-    contentLayerName = "block5_conv2"
-    print("   Calculating content loss.")
-    contentLayer = outputDict[contentLayerName]
-    contentOutput = contentLayer[0, :, :, :]
-    genOutput = contentLayer[2, :, :, :]
-    loss += None   #TODO: implement.
-    print("   Calculating style loss.")
-    for layerName in styleLayerNames:
-        loss += None   #TODO: implement.
-    loss += None   #TODO: implement.
-    # TODO: Setup gradients or use K.gradients().
-    print("   Beginning transfer.")
-    for i in range(TRANSFER_ROUNDS):
-        print("   Step %d." % i)
-        #TODO: perform gradient descent using fmin_l_bfgs_b.
-        print("      Loss: %f." % tLoss)
-        img = deprocessImage(x)
-        saveFile = None   #TODO: Implement.
-        #imsave(saveFile, img)   #Uncomment when everything is working right.
-        print("      Image saved to \"%s\"." % saveFile)
-    print("   Transfer complete.")
+def deprocess_image(x):
+    x = x.reshape((CONTENT_IMG_H, CONTENT_IMG_W, 3))
+
+    # Remove zero-center by mean pixel
+    x[:, :, 0] += 103.939
+    x[:, :, 1] += 116.779
+    x[:, :, 2] += 123.68
+
+    # 'BGR'->'RGB'
+    x = x[:, :, ::-1]
+    x = np.clip(x, 0, 255).astype("uint8")
+    return x
+
+def gram_matrix(x):
+    x = tf.transpose(x, (2, 0, 1))
+    features = tf.reshape(x, (tf.shape(x)[0], -1))
+    gram = tf.matmul(features, tf.transpose(features))
+    return gram
+
+def style_loss(style, combination):
+    S = gram_matrix(style)
+    C = gram_matrix(combination)
+    channels = 3
+    size = CONTENT_IMG_H * CONTENT_IMG_W
+    return tf.reduce_sum(tf.square(S - C)) / (4.0 * (channels ** 2) * (size ** 2))
+
+def content_loss(base, combination):
+    return tf.reduce_sum(tf.square(combination - base))
+
+def total_loss(x):
+    a = tf.square(
+        x[:, : CONTENT_IMG_H - 1, : CONTENT_IMG_W - 1, :] - x[:, 1:, : CONTENT_IMG_W - 1, :]
+    )
+    b = tf.square(
+        x[:, : CONTENT_IMG_H - 1, : CONTENT_IMG_W - 1, :] - x[:, : CONTENT_IMG_H - 1, 1:, :]
+    )
+    return tf.reduce_sum(tf.pow(a + b, 1.25))
+
+# Build a VGG19 model loaded with pre-trained ImageNet weights
+model = vgg19.VGG19(weights="imagenet", include_top=False)
+
+# Get the symbolic outputs of important layers.
+outputs_dict = dict([(layer.name, layer.output) for layer in model.layers])
+
+# Set up a model that returns the activation values for every layer in VGG19.
+feature_extractor = keras.Model(inputs=model.inputs, outputs=outputs_dict)
+
+style_layer_names = ["block1_conv1", "block2_conv1", "block3_conv1", "block4_conv1", "block5_conv1",]
+
+# The layer to use for the content loss.
+content_layer_name = "block5_conv2"
 
 
+def compute_loss(tData, cData, sData):
+    input_tensor = tf.concat([cData, sData, tData], axis=0)
+    features = feature_extractor(input_tensor)
+
+    # Initialize the loss
+    loss = tf.zeros(shape=())
+
+    # Add content loss
+    layer_features = features[content_layer_name]
+    base_image_features = layer_features[0, :, :, :]
+    combination_features = layer_features[2, :, :, :]
+    loss = loss + content_weight * content_loss(base_image_features, combination_features)
+
+    # Add style loss
+    for layer_name in style_layer_names:
+        layer_features = features[layer_name]
+        style_reference_features = layer_features[1, :, :, :]
+        combination_features = layer_features[2, :, :, :]
+        sl = style_loss(style_reference_features, combination_features)
+        loss += (style_weight / len(style_layer_names)) * sl
+
+    # Add total variation loss
+    loss += total_weight * total_loss(tData)
+    return loss
+
+@tf.function
+def get_grads(tData, cData, sData):
+    with tf.GradientTape() as tape:
+        loss = compute_loss(tData, cData, sData)
+    grads = tape.gradient(loss, tData)
+    return loss, grads
+
+def style_transfer(tData, cData, sData):
+  optimizer = keras.optimizers.SGD(
+      keras.optimizers.schedules.ExponentialDecay(
+          initial_learning_rate=100.0, decay_steps=100, decay_rate=0.96
+      )
+  )
+
+  iterations = 500
+  for i in range(1, iterations + 1):
+      loss, grads = get_grads(tData, cData, sData)
+      optimizer.apply_gradients([(grads, tData)])
+      if i % 100 == 0:
+          print("Iteration %d: loss=%.2f" % (i, loss))
+          img = deprocess_image(tData.numpy())
+          fname = NAME + "_at_iteration_%d.png" % i
+          keras.preprocessing.image.save_img(fname, img)
 
 
-
-#=========================<Main>================================================
 
 def main():
-    print("Starting style transfer program.")
-    raw = getRawData()
-    cData = preprocessData(raw[0])   # Content image.
-    sData = preprocessData(raw[1])   # Style image.
-    tData = preprocessData(raw[2])   # Transfer image.
-    styleTransfer(cData, sData, tData)
-    print("Done. Goodbye.")
+  cData = preprocess_image(CONTENT_IMG_PATH)
+  sData = preprocess_image(STYLE_IMG_PATH)
+  tData = tf.Variable(preprocess_image(CONTENT_IMG_PATH))
+  style_transfer(tData, cData, sData)
 
-
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+  main()
