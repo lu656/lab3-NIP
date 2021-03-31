@@ -1,3 +1,5 @@
+# see README for reference links
+
 import os
 import numpy as np
 import tensorflow as tf
@@ -9,11 +11,9 @@ CONTENT_IMG_PATH = './monke.jpg'
 STYLE_IMG_PATH = './mosaic.jpg' 
 NAME = 'monkmo'
 
-# Weights of the different loss components
 total_weight = 1e-6
 style_weight = 1e-6
 content_weight = 2.5e-8
-
 
 CONTENT_IMG_H = 500
 CONTENT_IMG_W = 500
